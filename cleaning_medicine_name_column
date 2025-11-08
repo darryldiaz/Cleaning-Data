@@ -1,0 +1,140 @@
+# Load the libraries:
+install.packages("tidyverse")
+install.packages("dplyr")
+library(dplyr)
+library(tidyverse)
+library(stringr)
+
+#Upload and read the data
+data1<-read.csv(file.choose(),header=T)
+view(data1)
+#look at variable types using "glimpse" function
+glimpse(data1)
+
+# <chr> character, <int> integer, <dbl> double //numeric variable, <list>, factor (size)
+class(data1$Uses) #determine what variable type a specific column is
+
+
+#Goal: separate first column into medicine name, dosage, and form
+#define a vector common medicine forms
+forms <- c("injection", "tablet", "syrup", "cream", "ointment", "oral suspension",
+           "eye drop", "expectorant", "lubricant", "nasal spray", "inhaler", "gel",
+           "solution", "capsule", "drops", "lotion", "powder", "liquid","suspension",
+           "lozenges", "respules", "soap", "penfill", "cartridge", "nale lacquer", "drop", "infusion", 
+           "ophthalmic suspension")
+
+
+#create regrex patterns
+form_pattern <- paste0("\\b(", paste(forms, collapse = "|"), ")\\b")
+dosage_pattern <- "(\\d*\\.?\\d+\\s*(?:mg|mcg|g|ml|iu|units|l|%)?\\s*(?:[+/\\-]\\s*\\d*\\.?\\d+\\s*(?:mg|mcg|g|ml|iu|units|l|%)?)*(?:/\\s*\\d*\\.?\\d+\\s*(?:mg|mcg|g|ml|iu|units|l|%)?)*)"
+
+#extract dosage and form
+data1$Dosage <- str_extract(tolower(data1$Medicine.Name), dosage_pattern)
+data1$Form <- str_extract(tolower(data1$Medicine.Name), form_pattern)
+
+# Remove dosage and form from the string to isolate medicine name
+data1$Medicine.Names <- data1$Medicine.Name %>%
+  tolower() %>%
+  str_remove_all(dosage_pattern) %>%
+  str_remove_all(form_pattern) %>%
+  str_replace_all("[[:punct:]]", " ") %>%  # remove punctuation
+  str_squish()                             # remove extra spaces
+
+# Capitalize first letters for readability
+data1$Medicine.Name <- str_to_title(data1$Medicine.Name)
+data1$Form <- str_to_title(data1$Form)
+data1$Dosage <- str_trim(data1$Dosage)
+
+# Reorder columns
+data_clean <- data1 %>%
+  select(Medicine.Name, Dosage, Form)
+
+# View the cleaned dataset
+view(data_clean)
+
+# Filter medicines with missing form
+no_form_meds <- data_clean %>%
+  filter(is.na(Form) | Form == "") %>%
+  select(Medicine.Name, Dosage, Form)
+
+# View results
+view(no_form_meds)
+
+# Filter medicines with missing dosage
+missing_dosage_meds <- data1 %>%
+  filter(is.na(Dosage) | Dosage == "") %>%
+  select(Medicine.Name, Dosage, Form)
+
+view(missing_dosage_meds)
+
+#default dosage of 1 for medicines whose Form is Tablet or Capsule and whose Dosage is missing
+data_clean1 <- data_clean %>%
+  mutate(
+    Dosage = ifelse(
+      (is.na(Dosage) | Dosage == "") & tolower(Form) %in% c("tablet", "capsule"),
+      "1",
+      Dosage
+    )
+  )
+
+view(data_clean1)
+
+#default dosage of 1-2 drops for medicines whose form includes "drop" or "spray"
+data_clean1 <- data_clean1 %>%
+  mutate(
+    Dosage = ifelse(
+      (is.na(Dosage) | Dosage == "") & tolower(Form) %in% c("drops", "eye drop", "ear drop", "nasal spray", "spray"),
+      "1-2 drops",
+      Dosage
+    )
+  )
+
+#default dosage of 1-2 sprays for medicines whose form includes "spray"
+data_clean1 <- data_clean1 %>%
+  mutate(
+    Dosage = ifelse(
+      (is.na(Dosage) | Dosage == "") & tolower(Form) %in% c("nasal spray", "spray"),
+      "1-2 sprays",
+      Dosage
+    )
+  )
+
+#filter out multi-name medications
+# Define a function to extract first 1-2 meaningful words
+
+extract_medication <- function(name) {
+  # Convert to lowercase
+  name <- tolower(name)
+  # Remove numbers and dosage units, but keep hyphens
+  name <- str_replace_all(name, "\\b\\d+\\s*(mg|mcg|g|ml|iu|units|%)?\\b", " ")
+  # Remove remaining punctuation except hyphens
+  name <- str_replace_all(name, "[^a-z\\s-]", " ")
+  # Split into words
+  words <- str_split(name, "\\s+")[[1]]
+  # Remove empty strings
+  words <- words[words != ""]
+  # Take first 1–2 words
+  med <- paste(words[1:min(1, length(words))], collapse = " ")
+  # Capitalize properly
+  med <- str_to_title(med)
+  return(med)
+}
+
+# Apply function to dataframe
+data_clean2 <- data_clean1 %>%
+  mutate(Medication = sapply(Medicine.Name, extract_medication))
+
+# Get current column order
+cols <- colnames(data_clean2)
+
+# Move Medication after Medicine_Name
+cols <- c(
+  cols[cols == "Medicine.Name"],
+  cols[cols == "Medication"],
+  cols[!(cols %in% c("Medicine.Name", "Medication"))]
+)
+
+# Reorder dataframe
+data_clean3 <- data_clean2[, cols]
+
+view(data_clean3)
